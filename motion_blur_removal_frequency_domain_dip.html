@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DIP Lab: Motion Blur Removal & Frequency Domain Restoration</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- KaTeX for Math Rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
+
+    <!-- Chart.js for Profile Plotting -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        .canvas-container {
+            position: relative;
+            aspect-ratio: 1;
+            width: 100%;
+            background: #0f172a;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.6);
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            image-rendering: pixelated;
+        }
+        .tab-btn.active {
+            border-bottom: 2px solid #3b82f6;
+            color: #60a5fa;
+            background-color: rgba(30, 41, 59, 0.5);
+        }
+        /* Custom Scrollbars */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans min-h-screen flex flex-col">
+
+    <!-- Top Navigation Header -->
+    <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50 px-6 py-3.5 flex justify-between items-center">
+        <div class="flex items-center gap-3">
+            <div class="p-2 bg-blue-600/20 text-blue-400 rounded-lg border border-blue-500/30">
+                <i data-lucide="waves" class="w-6 h-6"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                    Frequency Domain Image Restoration
+                    <span class="text-xs font-mono font-normal bg-blue-950 text-blue-300 border border-blue-800 px-2 py-0.5 rounded">DIP 3rd Year Project</span>
+                </h1>
+                <p class="text-xs text-slate-400">Degradation Modeling, Motion PSF, 2D FFT & Regularized Inverse Filtering</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-4 text-sm text-slate-400 font-mono">
+            <span class="hidden md:inline-flex items-center gap-1.5 bg-slate-800 px-3 py-1 rounded-md border border-slate-700">
+                <i data-lucide="cpu" class="w-4 h-4 text-emerald-400"></i> Matrix Dim: 256×256
+            </span>
+            <a href="#math-doc" class="hover:text-blue-400 transition-colors flex items-center gap-1 text-xs">
+                <i data-lucide="book-open" class="w-4 h-4"></i> Math Docs
+            </a>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 lg:p-6 max-w-[1800px] w-full mx-auto">
+
+        <!-- LEFT PANEL: Controls & Image Selectors (3 Cols) -->
+        <div class="lg:col-span-3 space-y-4">
+            
+            <!-- Preset & Input Upload Card -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2">
+                    <i data-lucide="image" class="w-4 h-4 text-blue-400"></i> 1. Input Source
+                </h2>
+                <div class="grid grid-cols-3 gap-2 mb-3">
+                    <button onclick="loadPreset('cameraman')" class="preset-btn px-2 py-2 bg-slate-800 hover:bg-slate-700 text-xs rounded border border-slate-700 text-center transition">
+                        Cameraman
+                    </button>
+                    <button onclick="loadPreset('geometric')" class="preset-btn px-2 py-2 bg-slate-800 hover:bg-slate-700 text-xs rounded border border-slate-700 text-center transition">
+                        Geometric
+                    </button>
+                    <button onclick="loadPreset('text')" class="preset-btn px-2 py-2 bg-slate-800 hover:bg-slate-700 text-xs rounded border border-slate-700 text-center transition">
+                        High Contrast
+                    </button>
+                </div>
+                <label class="flex items-center justify-center gap-2 w-full py-2 bg-slate-800/60 hover:bg-slate-800 text-slate-300 text-xs rounded-lg border border-dashed border-slate-700 cursor-pointer transition">
+                    <i data-lucide="upload" class="w-4 h-4 text-slate-400"></i> Upload Custom Image
+                    <input type="file" id="imageUploader" accept="image/*" class="hidden" onchange="handleImageUpload(event)">
+                </label>
+            </div>
+
+            <!-- Motion Blur Degradation Parameters -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl space-y-4">
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                    <span class="flex items-center gap-2"><i data-lucide="move" class="w-4 h-4 text-amber-400"></i> 2. Motion Degradation</span>
+                    <span id="psf-summary" class="font-mono text-[10px] text-amber-400 bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-800">L=15px, θ=0°</span>
+                </h2>
+
+                <div>
+                    <div class="flex justify-between text-xs mb-1">
+                        <label class="text-slate-300">Blur Length ($L$)</label>
+                        <span id="len-val" class="font-mono text-amber-400">15 px</span>
+                    </div>
+                    <input type="range" id="blurLength" min="1" max="45" value="15" step="2" class="w-full accent-amber-500" oninput="updateSimulation()">
+                </div>
+
+                <div>
+                    <div class="flex justify-between text-xs mb-1">
+                        <label class="text-slate-300">Blur Angle ($\theta$)</label>
+                        <span id="angle-val" class="font-mono text-amber-400">0°</span>
+                    </div>
+                    <input type="range" id="blurAngle" min="0" max="180" value="0" step="5" class="w-full accent-amber-500" oninput="updateSimulation()">
+                </div>
+
+                <div class="pt-2 border-t border-slate-800">
+                    <div class="flex justify-between text-xs mb-1">
+                        <label class="text-slate-300 flex items-center gap-1">
+                            <i data-lucide="zap" class="w-3.5 h-3.5 text-red-400"></i> Additive Noise ($\sigma$)
+                        </label>
+                        <span id="noise-val" class="font-mono text-red-400">0.005</span>
+                    </div>
+                    <input type="range" id="noiseLevel" min="0" max="0.05" value="0.005" step="0.001" class="w-full accent-red-500" oninput="updateSimulation()">
+                    <p class="text-[10px] text-slate-500 mt-1">Simulates sensor Gaussian noise $N(u,v)$.</p>
+                </div>
+            </div>
+
+            <!-- Restoration Controls -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl space-y-4">
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                    <i data-lucide="sliders" class="w-4 h-4 text-emerald-400"></i> 3. Frequency Filtering
+                </h2>
+
+                <div>
+                    <label class="text-xs text-slate-300 block mb-1">Filter Algorithm</label>
+                    <select id="filterType" class="w-full bg-slate-950 border border-slate-700 text-xs text-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500 outline-none" onchange="updateSimulation()">
+                        <option value="inverse">Truncated Inverse Filter</option>
+                        <option value="wiener">Wiener Filter (MMSE)</option>
+                        <option value="pure">Pure Inverse Filter (No Threshold)</option>
+                    </select>
+                </div>
+
+                <div id="eps-container">
+                    <div class="flex justify-between text-xs mb-1">
+                        <label class="text-slate-300">Regularization Cutoff ($\epsilon$)</label>
+                        <span id="eps-val" class="font-mono text-emerald-400">0.010</span>
+                    </div>
+                    <input type="range" id="epsilon" min="-4" max="-0.5" value="-2" step="0.1" class="w-full accent-emerald-500" oninput="updateSimulation()">
+                    <p class="text-[10px] text-slate-500 mt-1">Prevents $1/H(u,v) \to \infty$ where frequency components are tiny.</p>
+                </div>
+
+                <div id="snr-container" class="hidden">
+                    <div class="flex justify-between text-xs mb-1">
+                        <label class="text-slate-300">Estimated NSR ($K = \sigma_n^2 / \sigma_f^2$)</label>
+                        <span id="nsr-val" class="font-mono text-emerald-400">0.005</span>
+                    </div>
+                    <input type="range" id="nsrParam" min="0.0001" max="0.05" value="0.005" step="0.0005" class="w-full accent-emerald-500" oninput="updateSimulation()">
+                </div>
+            </div>
+
+            <!-- Metrics Scorecard -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl grid grid-cols-2 gap-3">
+                <div class="bg-slate-950 border border-slate-800 p-2.5 rounded-lg text-center">
+                    <span class="text-[10px] text-slate-400 block uppercase font-mono">PSNR</span>
+                    <span id="psnr-display" class="text-lg font-bold font-mono text-emerald-400">0.00 dB</span>
+                </div>
+                <div class="bg-slate-950 border border-slate-800 p-2.5 rounded-lg text-center">
+                    <span class="text-[10px] text-slate-400 block uppercase font-mono">SSIM</span>
+                    <span id="ssim-display" class="text-lg font-bold font-mono text-cyan-400">0.0000</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT PANEL: Visual Displays & Analysis (9 Cols) -->
+        <div class="lg:col-span-9 space-y-4">
+            
+            <!-- Spatial Domain Canvas Trio -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                        <i data-lucide="eye" class="w-4 h-4 text-blue-400"></i> Spatial Domain Representations
+                    </h2>
+                    <span class="text-xs text-slate-500 font-mono">256 × 256 Pixel Grids</span>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <!-- Original -->
+                    <div>
+                        <div class="canvas-container">
+                            <canvas id="canvas-original"></canvas>
+                        </div>
+                        <p class="text-xs text-center font-medium mt-2 text-slate-300">Original $f(x,y)$</p>
+                    </div>
+
+                    <!-- Blurred -->
+                    <div>
+                        <div class="canvas-container">
+                            <canvas id="canvas-degraded"></canvas>
+                        </div>
+                        <p class="text-xs text-center font-medium mt-2 text-amber-300">Degraded $g(x,y)$</p>
+                    </div>
+
+                    <!-- Restored -->
+                    <div>
+                        <div class="canvas-container">
+                            <canvas id="canvas-restored"></canvas>
+                        </div>
+                        <p class="text-xs text-center font-medium mt-2 text-emerald-300">Restored $\hat{f}(x,y)$</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Frequency Domain Spectrum Analysis -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                        <i data-lucide="activity" class="w-4 h-4 text-purple-400"></i> Frequency Domain Fourier Spectrums (Centered Zero-Frequency $\text{fftshift}$)
+                    </h2>
+                    <span class="text-xs text-slate-500 font-mono">Log Magnitude $\ln(1 + |F|)$</span>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <!-- Degraded Spectrum -->
+                    <div>
+                        <div class="canvas-container">
+                            <canvas id="canvas-fft-degraded"></canvas>
+                        </div>
+                        <p class="text-xs text-center font-medium mt-2 text-purple-300">Degraded Spectrum $|G(u,v)|$</p>
+                    </div>
+
+                    <!-- Filter H(u,v) -->
+                    <div>
+                        <div class="canvas-container">
+                            <canvas id="canvas-fft-psf"></canvas>
+                        </div>
+                        <p class="text-xs text-center font-medium mt-2 text-amber-300">Filter Spectrum $|H(u,v)|$</p>
+                    </div>
+
+                    <!-- Restored Spectrum -->
+                    <div>
+                        <div class="canvas-container">
+                            <canvas id="canvas-fft-restored"></canvas>
+                        </div>
+                        <p class="text-xs text-center font-medium mt-2 text-cyan-300">Restored Spectrum $|\hat{F}(u,v)|$</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Math & Theory Section -->
+            <div id="math-doc" class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
+                <h2 class="text-sm font-bold text-slate-200 border-b border-slate-800 pb-2 flex items-center gap-2">
+                    <i data-lucide="book" class="w-4 h-4 text-blue-400"></i> Mathematical Background & 3rd Year DIP Project Analysis
+                </h2>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-slate-300 leading-relaxed">
+                    <div>
+                        <h3 class="font-semibold text-blue-400 mb-1">1. Motion Blur PSF Transfer Function $H(u,v)$</h3>
+                        <p class="mb-2">Linear motion across distance $L$ at angle $\theta$ is modeled in the frequency domain as a sinc filter with periodic zeros (dark parallel bands in the PSF spectrum):</p>
+                        <div class="bg-slate-950 p-2 rounded border border-slate-800 font-mono my-2 overflow-x-auto" id="eq-psf"></div>
+                        <p>Where $u' = u \cos\theta + v \sin\theta$ is the spatial frequency along the blur path.</p>
+                    </div>
+
+                    <div>
+                        <h3 class="font-semibold text-emerald-400 mb-1">2. Frequency Domain Inverse Filtering Paradox</h3>
+                        <p class="mb-2">Restoration attempts to invert $H(u,v)$. However, when noise $N(u,v)$ is present:</p>
+                        <div class="bg-slate-950 p-2 rounded border border-slate-800 font-mono my-2 overflow-x-auto" id="eq-inverse"></div>
+                        <p>At frequencies where $H(u,v) \approx 0$, the noise term $\frac{N(u,v)}{H(u,v)}$ approaches infinity, producing overwhelming high-frequency ring artifact noise.</p>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800 bg-slate-900/60 py-3 text-center text-xs text-slate-500 font-mono">
+        Digital Image Processing Project Tool &bull; Frequency Domain Restoration &bull; IEEE DIP Syllabus Compliant
+    </footer>
+
+    <!-- JS Application Logic -->
+    <script>
+        // --- 1. Global State & Matrix Buffers ---
+        const SIZE = 256; // Fixed resolution for live FFT computation
+        
+        let imgOriginal = new Float32Array(SIZE * SIZE);
+        let imgDegraded = new Float32Array(SIZE * SIZE);
+        let imgRestored = new Float32Array(SIZE * SIZE);
+        
+        // Complex FFT arrays: [real, imag] flattened
+        let F_deg_real = new Float32Array(SIZE * SIZE);
+        let F_deg_imag = new Float32Array(SIZE * SIZE);
+        let H_real = new Float32Array(SIZE * SIZE);
+        let H_imag = new Float32Array(SIZE * SIZE);
+        let F_res_real = new Float32Array(SIZE * SIZE);
+        let F_res_imag = new Float32Array(SIZE * SIZE);
+
+        // Canvas Contexts
+        const ctxOriginal = document.getElementById('canvas-original').getContext('2d');
+        const ctxDegraded = document.getElementById('canvas-degraded').getContext('2d');
+        const ctxRestored = document.getElementById('canvas-restored').getContext('2d');
+        const ctxFFTDegraded = document.getElementById('canvas-fft-degraded').getContext('2d');
+        const ctxFFTPSF = document.getElementById('canvas-fft-psf').getContext('2d');
+        const ctxFFTRestored = document.getElementById('canvas-fft-restored').getContext('2d');
+
+        // Set canvas resolutions
+        [ctxOriginal, ctxDegraded, ctxRestored, ctxFFTDegraded, ctxFFTPSF, ctxFFTRestored].forEach(ctx => {
+            ctx.canvas.width = SIZE;
+            ctx.canvas.height = SIZE;
+        });
+
+        // --- 2. Cooley-Tukey 1D & 2D FFT Algorithm ---
+        function fft1d(re, im, forward = true) {
+            const n = re.length;
+            if (n <= 1) return;
+
+            // Bit-reversal permutation
+            for (let i = 0; i < n; i++) {
+                let j = 0;
+                for (let k = 0; k < Math.log2(n); k++) {
+                    j = (j << 1) | ((i >> k) & 1);
+                }
+                if (j > i) {
+                    let tr = re[i]; re[i] = re[j]; re[j] = tr;
+                    let ti = im[i]; im[i] = im[j]; im[j] = ti;
+                }
+            }
+
+            // Cooley-Tukey computation
+            for (let len = 2; len <= n; len <<= 1) {
+                let ang = 2 * Math.PI / len * (forward ? -1 : 1);
+                let wlen_r = Math.cos(ang);
+                let wlen_i = Math.sin(ang);
+                for (let i = 0; i < n; i += len) {
+                    let w_r = 1, w_i = 0;
+                    for (let j = 0; j < len / 2; j++) {
+                        let u_r = re[i + j], u_i = im[i + j];
+                        let v_r = re[i + j + len / 2] * w_r - im[i + j + len / 2] * w_i;
+                        let v_i = re[i + j + len / 2] * w_i + im[i + j + len / 2] * w_r;
+                        re[i + j] = u_r + v_r;
+                        im[i + j] = u_i + v_i;
+                        re[i + j + len / 2] = u_r - v_r;
+                        im[i + j + len / 2] = u_i - v_i;
+                        let next_w_r = w_r * wlen_r - w_i * wlen_i;
+                        let next_w_i = w_r * wlen_i + w_i * wlen_r;
+                        w_r = next_w_r; w_i = next_w_i;
+                    }
+                }
+            }
+
+            if (!forward) {
+                for (let i = 0; i < n; i++) {
+                    re[i] 
